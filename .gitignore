@@ -1,0 +1,6 @@
+.ssh/
+.cfg/
+_tmp
+.venv
+**/tmp/***
+kubespray
