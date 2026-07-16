@@ -427,6 +427,10 @@ _scale(){
   esac
 }
 
+_labelWorkerNodes(){
+  multipass exec edcelvistacom-local-1 -- bash -c "sudo kubectl get nodes --no-headers | awk '\$3 != \"control-plane\" {print \$1}' | while read n; do sudo kubectl label node \$n node-role.kubernetes.io/worker=worker; done"
+}
+
 ## RUN ###
 trap cleanup EXIT
 
