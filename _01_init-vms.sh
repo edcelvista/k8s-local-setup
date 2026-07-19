@@ -14,17 +14,18 @@ source ./cluster.env
 declare TMP_DIR="./tmp"
 declare CFG_DIR=".cfg"
 declare STATE_FILE="state.log"
+declare KUBESPRAYPATH="./kubespray"
 
 info(){
-  echo -e "✅ [INFO]$1\n"
+  echo -e "✅ [INFO] $1\n"
 }
 
 warn(){
-  echo -e "⚠️ [WARN]$1\n"
+  echo -e "⚠️ [WARN] $1\n"
 }
 
 fatal(){
-  echo -e "❌ ERROR]$1\n"
+  echo -e "❌ ERROR] $1\n"
   exit 1
 }
 
@@ -114,6 +115,10 @@ cleanup(){
   rm -rf $TMP_DIR
 }
 
+usage(){
+  fatal "Usage: $0 -a <action | init,scale>"
+}
+
 init(){
   info "Initializing, checking env and cloud-init configuration..."
 
@@ -129,10 +134,12 @@ init(){
   flightCheck
   createDirIfNotExists "$CFG_DIR"
   createFileIfNotExists "$PROJECT_HOME/$CFG_DIR/$STATE_FILE"
+
+  KUBESPRAYPATH="$PROJECT_HOME/kubespray"
 }
 
 displayConfig(){
-  info "Configuration:"
+  info "VM Configuration:"
   echo "    PROJECT_HOME: $PROJECT_HOME"
   echo "    MULTIPASS_KEY: $MULTIPASS_KEY"
   echo "    UBUNTU_REL: $UBUNTU_REL"
@@ -147,7 +154,7 @@ displayConfig(){
   echo "    KUBESPRAY_VER: $KUBESPRAY_VER"
   
   echo
-  info "Cloud Init:"
+  info "Cloud Init Configuration:"
   cat $CLOUD_INIT
 
   echo
@@ -179,7 +186,6 @@ provision(){
 cloneKubeSpray(){
   local state="clone-kubespray"
   local ENVPY=".venv/bin/python"
-  local KUBESPRAYPATH="$PROJECT_HOME/kubespray"
   
   if fileContains "$PROJECT_HOME/$CFG_DIR/$STATE_FILE" "$state"; then
     warn "🎉 Skipping $state... already completed..."
@@ -211,13 +217,11 @@ setupKubeSpray(){
   local state="setup-kubespray"
   
   local ENVPY=".venv/bin/python"
-  local KUBESPRAYPATH="$PROJECT_HOME/kubespray"
   local INVENTORYBUILDERPATH="$KUBESPRAYPATH/contrib/inventory_builder"
   
   if fileContains "$PROJECT_HOME/$CFG_DIR/$STATE_FILE" "$state"; then
     warn "⚡️ Skipping $state... already completed..."
   else
-
     ## ANSIBLE CFG SETUP
     echo
     info "⚙️ Setting up kubespray config... appending values after [defaults] in ansible.cfg"
@@ -248,45 +252,38 @@ interpreter_python = /usr/bin/python3.12 \
       warn "⚡️ skipping appending interpreter_python in $KUBESPRAYPATH/ansible.cfg already exists..."
     fi
 
-    ## INVENTORY SETUP
-    info "⚙️ Generate ansible host inventory..."
-    if ! folderExists "$INVENTORYBUILDERPATH"; then
-      warn "Trying to fix missing inventory builder..."
-      cp -r $PROJECT_HOME/_tmp/inventory_builder $INVENTORYBUILDERPATH
-      if ! folderExists "$INVENTORYBUILDERPATH"; then
-        fatal "Missing inventory builder dependecy..."
-      fi
+    info "Starting KubeSpray Configuration Setup..."
+
+    info "Deleting default variable files inside inventory..."
+    if folderExists "$KUBESPRAYPATH/inventory/local"; then
+      rm -rf $KUBESPRAYPATH/inventory/local
     fi
-    
-    info "📁 Changing Working Dir: $INVENTORYBUILDERPATH"
-    cd $INVENTORYBUILDERPATH
-    if folderExists "$INVENTORYBUILDERPATH/.venv"; then
-      warn "⚡️ .venv Directory exists... ignoring creating py virutal env..."
-    else
-      uv venv && uv pip install --python $ENVPY -r requirements.txt
+    if folderExists "$KUBESPRAYPATH/inventory/sample"; then
+      rm -rf $KUBESPRAYPATH/inventory/local
     fi
 
-    info "Starting KubeSpray Configuration Setup..."
     ## HARDENING
     info "Copying hardening.yml to kubespray directory..."
     cp $PROJECT_HOME/hardening.yml $KUBESPRAYPATH/hardening.yml
 
     info "Creating new inventory from sample..."
-    mkdir -p $KUBESPRAYPATH/inventory/k8cluster
-    cp -r $KUBESPRAYPATH/inventory/sample $KUBESPRAYPATH/inventory/k8cluster
+    cp -rfp $KUBESPRAYPATH/inventory/sample $KUBESPRAYPATH/inventory/k8cluster # NOTE ymls under sample will not be used. unless inventory.ini under sample are used.
 
-    info "Backingup original files..."
-    info "Changing Working Dir: $KUBESPRAYPATH/inventory/k8cluster/sample/group_vars/k8s_cluster"
-    cd $KUBESPRAYPATH/inventory/k8cluster/sample/group_vars/k8s_cluster && cp k8s-cluster.yml k8s-cluster.yml.BAK ; cp addons.yml addons.yml.BAK
+    info "Backing up original files..."
+    info "Changing Working Dir: $KUBESPRAYPATH/inventory/k8cluster/group_vars/k8s_cluster"
+    cd $KUBESPRAYPATH/inventory/k8cluster/group_vars/k8s_cluster && cp k8s-cluster.yml k8s-cluster.yml.BAK ; cp addons.yml addons.yml.BAK ; mv k8s-net-calico.yml k8s-net-calico.yml.BAK ; mv k8s-net-cilium.yml k8s-net-cilium.yml.BAK ; mv k8s-net-custom-cni.yml k8s-net-custom-cni.yml.BAK ; mv k8s-net-flannel.yml k8s-net-flannel.yml.BAK ; mv k8s-net-kube-ovn.yml k8s-net-kube-ovn.yml.BAK ; mv k8s-net-kube-router.yml k8s-net-kube-router.yml.BAK ; mv k8s-net-macvlan.yml k8s-net-macvlan.yml.BAK
 
-    info "Set K8s version"
+    info "Setting up custom_cni configuration..."
+    cp $PROJECT_HOME/k8s-net-custom-cni.yml $KUBESPRAYPATH/inventory/k8cluster/group_vars/k8s_cluster/k8s-net-custom-cni.yml
+
+    info "Set K8s version" # TODO CHECK if has effect
     sed -i '' "s~^kube_version:.*~kube_version: $K8S_VERSION~g" k8s-cluster.yml
 
     info "Set cluster name"
     sed -i '' "s~^cluster_name:.*~cluster_name: $CLUSTER_NAME~g" k8s-cluster.yml
 
-    info "Set network plugin to cni for now. We will install Cilium separately to be more interactive with the plugin."
-    sed -i '' 's~^kube_network_plugin:.*~kube_network_plugin: cni~g' k8s-cluster.yml
+    info "Set network plugin to custom_cni."
+    sed -i '' 's~^kube_network_plugin:.*~kube_network_plugin: custom_cni~g' k8s-cluster.yml
 
     info "Enable encryption of secret data at rest in etcd"
     sed -i '' 's~^kube_encrypt_secret_data:.*~kube_encrypt_secret_data: true~g' k8s-cluster.yml
@@ -301,20 +298,50 @@ interpreter_python = /usr/bin/python3.12 \
     sed -i '' "s~^metrics_server_enabled:.*~metrics_server_enabled: true~g" addons.yml
 
     info "Enable NTP sync"
-    info "📁 Changing Working Dir: $KUBESPRAYPATH/inventory/k8cluster/sample/group_vars/all"
-    cd $KUBESPRAYPATH/inventory/k8cluster/sample/group_vars/all && cp all.yml all.yml.BAK && cp etcd.yml etcd.yml.BAK
+    info "📁 Changing Working Dir: $KUBESPRAYPATH/inventory/k8cluster/group_vars/all"
+    cd $KUBESPRAYPATH/inventory/k8cluster/group_vars/all && cp all.yml all.yml.BAK && cp etcd.yml etcd.yml.BAK
     sed -i '' "s~^ntp_enabled:.*~ntp_enabled: true~g" all.yml
 
     info "Deploy etcd with kubeadm"
-    cd $KUBESPRAYPATH/inventory/k8cluster/sample/group_vars/all && cp etcd.yml etcd.yml.BAK
+    cd $KUBESPRAYPATH/inventory/k8cluster/group_vars/all && cp etcd.yml etcd.yml.BAK
     sed -i '' "s~^etcd_deployment_type:.*~etcd_deployment_type: kubeadm~g" etcd.yml
 
     echo "$state" >> $PROJECT_HOME/$CFG_DIR/$STATE_FILE
   fi
 
+  ## INVENTORY SETUP
+  info "⚙️ Generate ansible host inventory..."
+  if ! folderExists "$INVENTORYBUILDERPATH"; then
+    warn "Trying to fix missing inventory builder..."
+    cp -r $PROJECT_HOME/libs/inventory_builder $INVENTORYBUILDERPATH
+    if ! folderExists "$INVENTORYBUILDERPATH"; then
+      fatal "Missing inventory builder dependecy..."
+    fi
+  fi
+  
+  info "📁 Changing Working Dir: $INVENTORYBUILDERPATH"
+  cd $INVENTORYBUILDERPATH
+  if folderExists "$INVENTORYBUILDERPATH/.venv"; then
+    warn "⚡️ .venv Directory exists... ignoring creating py virutal env..."
+  else
+    uv venv && uv pip install --python $ENVPY -r requirements.txt
+  fi
+
   info "⚡️ Updating Inventory Host for new VMs detected..."
+
   declare -a IPS=( $($MULTIPASS_BIN list --format csv |tail -n +2 |cut -d "," -f3 | xargs) ) && \
-  CONFIG_FILE=$KUBESPRAYPATH/inventory/k8cluster/hosts.yml $INVENTORYBUILDERPATH/$ENVPY $INVENTORYBUILDERPATH/inventory.py ${IPS[@]}
+  CONFIG_FILE=$KUBESPRAYPATH/inventory/k8cluster/hosts.yml HOST_PREFIX=$NODE_PREFIX $INVENTORYBUILDERPATH/$ENVPY $INVENTORYBUILDERPATH/inventory.py ${IPS[@]}
+
+  cp $PROJECT_HOME/misc.yml $KUBESPRAYPATH/inventory/k8cluster/group_vars/k8s_cluster/misc.yml
+
+  if [[ "$(printf '%s' "$RESOLVABLE_HOSTS" | tr '[:upper:]' '[:lower:]')" == "false" ]]; then
+    info "Setting up other vars e.g. DNS ETC HOSTS"
+    ETC_HOST_IPS=$($MULTIPASS_BIN list --format csv | awk -F',' 'NR>1{print "  "$3" "$1}')
+    echo """
+dns_etchosts: |
+$ETC_HOST_IPS
+    """ >> $KUBESPRAYPATH/inventory/k8cluster/group_vars/k8s_cluster/misc.yml
+  fi
 
   echo
   info "⚙️ Generated Hosts file $KUBESPRAYPATH/inventory/k8cluster/hosts.yml ..."
@@ -323,7 +350,6 @@ interpreter_python = /usr/bin/python3.12 \
 
 initialBootstrap(){
   local state="init-bootstrap"
-  local KUBESPRAYPATH="$PROJECT_HOME/kubespray"
 
   echo
   info "⚡️ Running Initial Bootstrap Step..."
@@ -335,28 +361,26 @@ initialBootstrap(){
 }
 
 bootstrapK8s(){
-  local KUBESPRAYPATH="$PROJECT_HOME/kubespray"
-
   info "⚡️ Run the deployment with Hardening Profile..."
   info "📁 Changing Working Dir: $KUBESPRAYPATH"
   cd $KUBESPRAYPATH && .venv/bin/ansible-playbook -i ./inventory/k8cluster/hosts.yml ./cluster.yml -e "@hardening.yml" -e ansible_user=$SSH_USER -b --become-user=root
 }
 
 scaleK8s(){
-  local KUBESPRAYPATH="$PROJECT_HOME/kubespray"
 
   info "⚡️ Run the deployment with Hardening Profile..."
   info "📁 Changing Working Dir: $KUBESPRAYPATH"
-  cd $KUBESPRAYPATH && .venv/bin/ansible-playbook -i ./inventory/k8cluster/hosts.yml ./scale.yml -e ansible_user=$SSH_USER -b --become-user=root
+  cd $KUBESPRAYPATH && .venv/bin/ansible-playbook -i ./inventory/k8cluster/hosts.yml ./scale.yml -e "@hardening.yml" -e ansible_user=$SSH_USER -b --become-user=root
 }
 
 _initProvision(){
+
   read -rp "📦 Provision the VMs via $MULTIPASS_BIN - Continue? (y/n): " answer
 
   case "$answer" in
     [Yy]|[Yy][Ee][Ss])
       echo
-      info "You selected Yes"
+      info "Continuing..."
       provision
       cloneKubeSpray
       setupKubeSpray
@@ -367,6 +391,8 @@ _initProvision(){
       case "$answer" in
         [Yy]|[Yy][Ee][Ss])
           echo "Continuing..."
+            info "Host Configuration:"
+            cat $KUBESPRAYPATH/inventory/k8cluster/hosts.yml
             bootstrapK8s
           ;;
         [Nn]|[Nn][Oo])
@@ -393,49 +419,54 @@ _scale(){
   read -rp "📦 Scale the VMs via $MULTIPASS_BIN - Continue? (y/n): " answer
 
   case "$answer" in
-    [Yy]|[Yy][Ee][Ss])
-      echo
-      info "You selected Yes"
-      provision
-      setupKubeSpray
-      initialBootstrap
+  [Yy]|[Yy][Ee][Ss])
+    echo
+    info "You selected Yes"
+    provision
+    cloneKubeSpray
+    setupKubeSpray
+    initialBootstrap
 
-      read -rp "Modify the ./kubespray/inventory/k8cluster/hosts.yml to arrange the nodes & Continue? (y/n): " answer
+    read -rp "Modify the ./kubespray/inventory/k8cluster/hosts.yml to arrange the nodes & Continue? (y/n): " answer
 
-      case "$answer" in
-        [Yy]|[Yy][Ee][Ss])
-          echo "Continuing..."
-            scaleK8s
-          ;;
-        [Nn]|[Nn][Oo])
-          echo "Aborting.."
-          exit 0
-          ;;
-        *)
-          echo "Invalid input. Please enter y or n."
-          exit 1
-          ;;
-      esac
+    case "$answer" in
+      [Yy]|[Yy][Ee][Ss])
+        echo "Continuing..."
+          scaleK8s
+        ;;
+      [Nn]|[Nn][Oo])
+        echo "Aborting.."
+        exit 0
+        ;;
+      *)
+        echo "Invalid input. Please enter y or n."
+        exit 1
+        ;;
+    esac
 
-      ;;
-    [Nn]|[Nn][Oo])
-      warn "Aborting..."
-      ;;
-    *)
-      info "Invalid input. Please enter y or n."
-      ;;
+    ;;
+  [Nn]|[Nn][Oo])
+    warn "Aborting..."
+    ;;
+  *)
+    info "Invalid input. Please enter y or n."
+    ;;
   esac
 }
 
 _labelWorkerNodes(){
-  multipass exec edcelvistacom-local-1 -- bash -c "sudo kubectl get nodes --no-headers | awk '\$3 != \"control-plane\" {print \$1}' | while read n; do sudo kubectl label node \$n node-role.kubernetes.io/worker=worker; done"
+  multipass exec "${NODE_PREFIX}1" -- bash -c "sudo kubectl get nodes --no-headers | awk '\$3 != \"control-plane\" {print \$1}' | while read n; do sudo kubectl label node \$n node-role.kubernetes.io/worker=worker; done"
 }
 
 ## RUN ###
 trap cleanup EXIT
 
+if [[ -z "${1:-}" ]]; then
+  usage
+fi
+
 if [[ "$1" != "-a" ]]; then
-  fatal "Usage: $0 -a <action>"
+  usage
 fi
 
 case "$2" in
@@ -443,11 +474,13 @@ case "$2" in
     init
     displayConfig
     _initProvision
+    _labelWorkerNodes
     ;;
   scale)
     init
     displayConfig
     _scale
+    _labelWorkerNodes
     ;;
   *)
     warn "Unknown action: $2"
