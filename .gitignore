@@ -4,3 +4,4 @@ _tmp
 .venv
 **/tmp/***
 kubespray
+apps
