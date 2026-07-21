@@ -94,3 +94,9 @@ export NODE_COUNT=3
 ```
 $ ./_01_init-vms.sh -a scale
 ```
+
+## Custom RUN e.g. kube-api cert SSL Regenerate with new SANs
+```
+# If your goal is only to add a new DNS name or IP to the API server certificate, you do not need to rerun the full cluster.yml. A minimal sequence is:
+.venv/bin/ansible-playbook -i ./inventory/k8cluster/hosts.yml ./cluster.yml -e "@hardening.yml" -e ansible_user=ubuntu -b --become-user=root --tags facts,control-plane
+```

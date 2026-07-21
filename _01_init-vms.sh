@@ -288,14 +288,8 @@ interpreter_python = /usr/bin/python3.12 \
     info "Enable encryption of secret data at rest in etcd"
     sed -i '' 's~^kube_encrypt_secret_data:.*~kube_encrypt_secret_data: true~g' k8s-cluster.yml
 
-    info "Setting Custom CA Configuration"
+    info "Setting Auto renew certs."
     sed -i '' 's~^auto_renew_certificates:.*~auto_renew_certificates: true~g' k8s-cluster.yml
-
-    sed -i '' "/auto_renew_certificates: true/a\\
-certificate_key_size: 2048\\
-certificate_duration: 8760h\\
-kubelet_rotate_certificates: true\\
-kubelet_certificate_authority: ${PROJECT_HOME}/ca/ca.crt" k8s-cluster.yml
 
     # info "Install Kubernetes dashboard"
     # sed -i '' "s~^# dashboard_enabled:.*~dashboard_enabled: true~g" addons.yml
@@ -354,7 +348,7 @@ $ETC_HOST_IPS
 
   IPS_CSV=$(IFS=,; echo "${IPS[*]}")
   sed -i '' "s~^# supplementary_addresses_in_ssl_keys:.*~supplementary_addresses_in_ssl_keys: [$IPS_CSV,$KUBE_API_SAN]~g" $KUBESPRAYPATH/inventory/k8cluster/group_vars/k8s_cluster/k8s-cluster.yml
-  
+
   echo
   info "⚙️ Generated Hosts file $KUBESPRAYPATH/inventory/k8cluster/hosts.yml ..."
   cat $KUBESPRAYPATH/inventory/k8cluster/hosts.yml
