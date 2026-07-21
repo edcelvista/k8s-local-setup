@@ -25,13 +25,13 @@ custom_cni_chart_release_name: "antrea"
 custom_cni_chart_namespace: "kube-system"
 #
 ## Helm repository name - how the local record of Helm repository will be named
-# custom_cni_chart_repository_name: ""
+custom_cni_chart_repository_name: "antrea"
 #
 ## Helm repository URL
-# custom_cni_chart_repository_url: ""
+custom_cni_chart_repository_url: "https://charts.antrea.io"
 #
 ## Helm chart reference - path to the chart in the repository
-custom_cni_chart_ref: "https://github.com/antrea-io/antrea/releases/download/v2.6.2/antrea-chart.tgz"
+custom_cni_chart_ref: "antrea/antrea"
 #
 ## Helm chart version
 custom_cni_chart_version: "2.6.2"

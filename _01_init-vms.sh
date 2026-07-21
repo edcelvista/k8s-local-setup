@@ -271,7 +271,7 @@ interpreter_python = /usr/bin/python3.12 \
 
     info "Backing up original files..."
     info "Changing Working Dir: $KUBESPRAYPATH/inventory/k8cluster/group_vars/k8s_cluster"
-    cd $KUBESPRAYPATH/inventory/k8cluster/group_vars/k8s_cluster && cp k8s-cluster.yml k8s-cluster.yml.BAK ; cp addons.yml addons.yml.BAK ; mv k8s-net-calico.yml k8s-net-calico.yml.BAK ; mv k8s-net-cilium.yml k8s-net-cilium.yml.BAK ; mv k8s-net-custom-cni.yml k8s-net-custom-cni.yml.BAK ; mv k8s-net-flannel.yml k8s-net-flannel.yml.BAK ; mv k8s-net-kube-ovn.yml k8s-net-kube-ovn.yml.BAK ; mv k8s-net-kube-router.yml k8s-net-kube-router.yml.BAK ; mv k8s-net-macvlan.yml k8s-net-macvlan.yml.BAK
+    cd $KUBESPRAYPATH/inventory/k8cluster/group_vars/k8s_cluster && cp k8s-cluster.yml k8s-cluster.yml.BAK ; cp addons.yml addons.yml.BAK ; mv k8s-net-custom-cni.yml k8s-net-custom-cni.yml.BAK
 
     info "Setting up custom_cni configuration..."
     cp $PROJECT_HOME/k8s-net-custom-cni.yml $KUBESPRAYPATH/inventory/k8cluster/group_vars/k8s_cluster/k8s-net-custom-cni.yml
@@ -287,6 +287,15 @@ interpreter_python = /usr/bin/python3.12 \
 
     info "Enable encryption of secret data at rest in etcd"
     sed -i '' 's~^kube_encrypt_secret_data:.*~kube_encrypt_secret_data: true~g' k8s-cluster.yml
+
+    info "Setting Custom CA Configuration"
+    sed -i '' 's~^auto_renew_certificates:.*~auto_renew_certificates: true~g' k8s-cluster.yml
+
+    sed -i '' "/auto_renew_certificates: true/a\\
+certificate_key_size: 2048\\
+certificate_duration: 8760h\\
+kubelet_rotate_certificates: true\\
+kubelet_certificate_authority: ${PROJECT_HOME}/ca/ca.crt" k8s-cluster.yml
 
     # info "Install Kubernetes dashboard"
     # sed -i '' "s~^# dashboard_enabled:.*~dashboard_enabled: true~g" addons.yml
@@ -343,6 +352,9 @@ $ETC_HOST_IPS
     """ >> $KUBESPRAYPATH/inventory/k8cluster/group_vars/k8s_cluster/misc.yml
   fi
 
+  IPS_CSV=$(IFS=,; echo "${IPS[*]}")
+  sed -i '' "s~^# supplementary_addresses_in_ssl_keys:.*~supplementary_addresses_in_ssl_keys: [$IPS_CSV,$KUBE_API_SAN]~g" $KUBESPRAYPATH/inventory/k8cluster/group_vars/k8s_cluster/k8s-cluster.yml
+  
   echo
   info "⚙️ Generated Hosts file $KUBESPRAYPATH/inventory/k8cluster/hosts.yml ..."
   cat $KUBESPRAYPATH/inventory/k8cluster/hosts.yml
@@ -367,7 +379,6 @@ bootstrapK8s(){
 }
 
 scaleK8s(){
-
   info "⚡️ Run the deployment with Hardening Profile..."
   info "📁 Changing Working Dir: $KUBESPRAYPATH"
   cd $KUBESPRAYPATH && .venv/bin/ansible-playbook -i ./inventory/k8cluster/hosts.yml ./scale.yml -e "@hardening.yml" -e ansible_user=$SSH_USER -b --become-user=root
